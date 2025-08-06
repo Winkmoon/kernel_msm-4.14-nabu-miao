@@ -1,10 +1,10 @@
-name: XiaoMi11Pro ShirokoNeko Kernel Building
+name: XiaoMi Pad 5 ShirokoNeko Kernel Building
 env:
   TZ: Asia/Shanghai
   CPU: 'sm8350'
   FEIL: 'miao'
-  ANDROID_VERSION: 'android13'
-  KERNEL_VERSION: '5.4'
+  ANDROID_VERSION: 'android9'
+  KERNEL_VERSION: '4.14'
   KERNEL_NAME: 'ShirokoNeko-0d000721'
   KERNELSU_VARIANT: 'SukiSU-Ultra'
   KERNELSU_BRANCH: 'nongki'
