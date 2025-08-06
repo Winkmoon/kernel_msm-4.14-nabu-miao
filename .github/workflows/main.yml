@@ -1,4 +1,4 @@
-name: Build Xiaomi Pad 5 (nabu) Kernel with AnyKernel3
+name: Build Xiaomi Pad 5 Kernel
 
 on:
   workflow_call:
@@ -6,100 +6,73 @@ on:
 
 jobs:
   build:
-    name: Build Xiaomi Pad 5 Kernel by ${{ github.actor }}
+    name: Build Kernel
     runs-on: ubuntu-20.04
     steps:
 
-      - name: Get branch names
-        id: branch-names
+      - name: Get branch
+        id: branch
         uses: tj-actions/branch-names@v8
 
-      - name: Set SWAP to 5GiB
+      - name: Set SWAP
         uses: pierotofy/set-swap-space@master
         with:
           swap-size-gb: 5
 
-      - name: Initialize compilation environment
+      - name: Setup environment
         run: |
           sudo apt-get update
           sudo apt-get install -y software-properties-common
           sudo add-apt-repository -y ppa:deadsnakes/ppa
           sudo apt-get update
-          
           sudo apt-get install -y \
-            git automake flex lzop bison gperf build-essential zip curl zlib1g-dev \
-            g++-multilib libxml2-utils bzip2 libbz2-dev libbz2-1.0 libghc-bzlib-dev \
-            squashfs-tools pngcrush schedtool dpkg-dev liblz4-tool make optipng maven \
-            libssl-dev pwgen libswitch-perl policycoreutils minicom libxml-sax-base-perl \
-            libxml-simple-perl bc libc6-dev-i386 libx11-dev lib32z1-dev libgl1-mesa-dev \
-            xsltproc unzip device-tree-compiler python2.7 python3 \
-            libncurses5-dev libncurses5
-
+            git build-essential make bc python2.7 python3 \
+            libncurses5-dev lib32z1-dev gcc-multilib g++-multilib \
+            flex bison libssl-dev device-tree-compiler
           sudo ln -sf /usr/bin/python2.7 /usr/bin/python2
-          sudo apt-get install -y gcc-multilib g++-multilib
-          
           mkdir -p $GITHUB_WORKSPACE/workdir
-          echo "BUILD_TIME=$(TZ=Asia/Shanghai date "+%Y%m%d%H%M")" >> $GITHUB_ENV
+          echo "BUILD_TIME=$(date +%Y%m%d%H%M)" >> $GITHUB_ENV
 
-      - name: Get proton-clang13 toolchain
+      - name: Get toolchain
         run: |
           git clone https://github.com/kdrag0n/proton-clang.git -b 20210522 --depth 1 $GITHUB_WORKSPACE/workdir/clang
 
-      - name: Get Kernel source
+      - name: Get source
         run: |
-          git clone --recursive https://github.com/$GITHUB_REPOSITORY/ -b ${{ steps.branch-names.outputs.current_branch }} \
+          git clone --recursive https://github.com/$GITHUB_REPOSITORY/ -b ${{ steps.branch.outputs.current_branch }} \
           --depth 1 $GITHUB_WORKSPACE/workdir/source
 
-      - name: Build Xiaomi Pad 5 Kernel
+      - name: Build kernel
         run: |
           export KBUILD_BUILD_HOST=Github-Action
-          export KBUILD_BUILD_USER=$(echo ${{ github.actor }} | tr A-Z a-z)
-          export ARCH="arm64"
-          export SUBARCH="arm64"
+          export KBUILD_BUILD_USER=${{ github.actor }}
+          export ARCH=arm64
           export PATH="$GITHUB_WORKSPACE/workdir/clang/bin/:$PATH"
-          export CROSS_COMPILE="aarch64-linux-gnu-"
+          export CROSS_COMPILE=aarch64-linux-gnu-
           cd $GITHUB_WORKSPACE/workdir/source
-          export XIAOMI_TARGET_DEVICE="nabu"
           make O=out sm8150-perf_defconfig CC=clang
           make -j$(nproc --all) O=out CC=clang
 
-      - name: Check kernel output
+      - name: Verify output
         run: |
-          cd $GITHUB_WORKSPACE/workdir/source
-          if [ -f out/arch/arm64/boot/Image.gz-dtb ]; then
-              echo "CHECK_FILE_IS_OK=true" >> $GITHUB_ENV
+          if [ -f $GITHUB_WORKSPACE/workdir/source/out/arch/arm64/boot/Image.gz-dtb ]; then
+            echo "CHECK_FILE_IS_OK=true" >> $GITHUB_ENV
           else
-              echo "Kernel output file is missing"
-              exit 1
+            exit 1
           fi
 
-      - name: Prepare AnyKernel3 for nabu
+      - name: Package kernel
         if: env.CHECK_FILE_IS_OK == 'true'
         run: |
-          git clone https://github.com/AnyKernel3/AnyKernel3.git -b master --depth 1 $GITHUB_WORKSPACE/workdir/ak3
+          git clone https://github.com/AnyKernel3/AnyKernel3.git $GITHUB_WORKSPACE/workdir/ak3
+          cp $GITHUB_WORKSPACE/workdir/source/out/arch/arm64/boot/Image.gz-dtb $GITHUB_WORKSPACE/workdir/ak3
           cd $GITHUB_WORKSPACE/workdir/ak3
-          cat > anykernel.sh << 'EOL'
-          #!/bin/sh
-          block=/dev/block/bootdevice/by-name/boot
-          is_slot_device=0
-          ramdisk_compression=auto
-          patch_vbmeta_flag=auto
-          . tools/ak3-core.sh
-          EOL
-          chmod +x anykernel.sh
-          cp $GITHUB_WORKSPACE/workdir/source/out/arch/arm64/boot/Image.gz-dtb $GITHUB_WORKSPACE/workdir/ak3/
-          zip -r9 AnyKernel3-nabu-${{ env.BUILD_TIME }}.zip *
+          zip -r9 AnyKernel3-${{ env.BUILD_TIME }}.zip *
 
-      - name: Upload Kernel Image
-        if: env.CHECK_FILE_IS_OK == 'true'
+      - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: kernel_xiaomi_nabu_${{ env.BUILD_TIME }}_Image.gz-dtb
-          path: workdir/source/out/arch/arm64/boot/Image.gz-dtb
-
-      - name: Upload AnyKernel3 Zip
-        if: env.CHECK_FILE_IS_OK == 'true'
-        uses: actions/upload-artifact@v4
-        with:
-          name: AnyKernel3_xiaomi_nabu_${{ env.BUILD_TIME }}.zip
-          path: workdir/ak3/AnyKernel3-nabu-${{ env.BUILD_TIME }}.zip
+          name: Kernel-${{ env.BUILD_TIME }}
+          path: |
+            $GITHUB_WORKSPACE/workdir/source/out/arch/arm64/boot/Image.gz-dtb
+            $GITHUB_WORKSPACE/workdir/ak3/AnyKernel3-${{ env.BUILD_TIME }}.zip
