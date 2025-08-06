@@ -1,182 +1,95 @@
-name: XiaoMi Pad 5 ShirokoNeko Kernel Building
-env:
-  TZ: Asia/Shanghai
-  CPU: 'sm8350'
-  FEIL: 'miao'
-  ANDROID_VERSION: 'android9'
-  KERNEL_VERSION: '4.14'
-  KERNEL_NAME: 'ShirokoNeko-0d000721'
-  KERNELSU_VARIANT: 'SukiSU-Ultra'
-  KERNELSU_BRANCH: 'nongki'
+name: Build Xiaomi Pad 5 (nabu) Kernel with AnyKernel3
 on:
+  workflow_call:
   workflow_dispatch:
-    inputs:
-      kernel_suffix:
-        description: '内核后缀(留空默认,开头别加连字符)'
-        required: false
-        type: string
-        default: ''
+
 jobs:
   build:
+    name: Build Xiaomi Pad 5 Kernel by ${{ github.actor }}
     runs-on: ubuntu-latest
-    outputs:
-      ksuver: ${{ steps.ksu_version.outputs.ksuver }}
     steps:
-      - name: 最大化建筑空间
-        uses: easimon/maximize-build-space@master
+
+      - name: Get branch names
+        id: branch-names
+        uses: tj-actions/branch-names@v8
+
+      - name: Set SWAP to 5GiB
+        uses: pierotofy/set-swap-space@master
         with:
-          root-reserve-mb: 8192
-          temp-reserve-mb: 2048
-          swap-size-mb: 8192
-          remove-dotnet: 'true'
-          remove-android: 'true'
-          remove-haskell: 'true'
-          remove-codeql: 'true'
-      - name: 安装配置环境依赖
+          swap-size-gb: 5
+
+      - name: Initialize compilation environment
         run: |
-          sudo apt update
-          sudo apt-get install curl bison flex make binutils dwarves git lld pahole zip perl make gcc python3 python-is-python3 bc libssl-dev libelf-dev -y
-          sudo rm -rf ./llvm.sh
-          sudo wget https://apt.llvm.org/llvm.sh
-          sudo chmod +x llvm.sh
-          sudo ./llvm.sh 18 all
-          
-      - name: 初始化源码仓库
+          sudo apt-get update
+          sudo apt-get install -y git automake flex lzop bison gperf build-essential zip curl zlib1g-dev \
+          g++-multilib libxml2-utils bzip2 libbz2-dev libbz2-1.0 libghc-bzlib-dev squashfs-tools \
+          pngcrush schedtool dpkg-dev liblz4-tool make optipng maven libssl-dev pwgen libswitch-perl \
+          policycoreutils minicom libxml-sax-base-perl libxml-simple-perl bc libc6-dev-i386 \
+          lib32ncurses5-dev libx11-dev lib32z-dev libgl1-mesa-dev xsltproc unzip device-tree-compiler \
+          python2 python3
+          mkdir -p $GITHUB_WORKSPACE/workdir
+          echo "BUILD_TIME=$(TZ=Asia/Shanghai date "+%Y%m%d%H%M")" >> $GITHUB_ENV
+
+      - name: Get proton-clang13 toolchain
         run: |
-          rm -rf kernel_workspace && mkdir kernel_workspace && cd kernel_workspace
-          echo "正在克隆源码仓库..."
-          git clone --depth=1 https://github.com/Winkmoon/kernel_msm-4.14-nabu-miao.git -b udc-new common
-          echo "正在去除 ABI 保护 & 去除 dirty 后缀..."
-          rm common/android/abi_gki_protected_exports_* || true
-          for f in common/scripts/setlocalversion; do
-            sed -i 's/ -dirty//g' "$f"
-            sed -i '$i res=$(echo "$res" | sed '\''s/-dirty//g'\'')' "$f"
-          done
-      - name: 添加 SukiSU-Ultra
-        id: ksu_version
+          git clone https://github.com/kdrag0n/proton-clang.git -b 20210522 --depth 1 $GITHUB_WORKSPACE/workdir/clang
+
+      - name: Get Kernel source
         run: |
-          cd kernel_workspace
-          curl -LSs "https://raw.githubusercontent.com/ShirkNeko/SukiSU-Ultra/refs/heads/main/kernel/setup.sh" | bash -s nongki
-          cd ./KernelSU
-          KSU_VERSION=$(expr $(/usr/bin/git rev-list --count main) "+" 10700)
-          echo "KSUVER=$KSU_VERSION" >> $GITHUB_ENV
-          echo "ksuver=$KSU_VERSION" >> $GITHUB_OUTPUT
-          export KSU_VERSION=$KSU_VERSION
-          sed -i "s/DKSU_VERSION=12800/DKSU_VERSION=$KSU_VERSION/" kernel/Makefile
-          
-      - name: 添加 SukiSU-Ultra 配置项
+          git clone --recursive https://github.com/$GITHUB_REPOSITORY/ -b ${{ steps.branch-names.outputs.current_branch }} \
+          --depth 1 $GITHUB_WORKSPACE/workdir/source
+
+      - name: Build Xiaomi Pad 5 Kernel
         run: |
-          cd kernel_workspace
-          cd common
-          echo "CONFIG_KSU=y" >> ./arch/arm64/configs/gki_defconfig
-          echo "正在开启manual钩子..."
-          echo "CONFIG_KSU_MANUAL_HOOK=y" >> ./arch/arm64/configs/gki_defconfig
-          #禁用 defconfig 检查
-          sed -i 's/check_defconfig//' ./build.config.gki
-          
-      - name: 添加制作名称
+          export KBUILD_BUILD_HOST=Github-Action
+          export KBUILD_BUILD_USER=$(echo ${{ github.actor }} | tr A-Z a-z)
+          export ARCH="arm64"
+          export SUBARCH="arm64"
+          export PATH="$GITHUB_WORKSPACE/workdir/clang/bin/:$PATH"
+          export CROSS_COMPILE="aarch64-linux-gnu-"
+          cd $GITHUB_WORKSPACE/workdir/source
+          export XIAOMI_TARGET_DEVICE="nabu"
+          make O=out sm8150-perf_defconfig CC=clang
+          make -j$(nproc --all) O=out CC=clang
+
+      - name: Check kernel output
         run: |
-          cd kernel_workspace
-          cd common
-          echo "替换内核版本后缀..."
-          if [[ -n "${{ github.event.inputs.kernel_suffix }}" ]]; then
-            echo "当前内核版本后缀：${{ github.event.inputs.kernel_suffix }}"
-            for f in ./scripts/setlocalversion; do
-              sed -i "\$s|echo \"\\\$res\"|echo \"-${{ github.event.inputs.kernel_suffix }}\"|" "$f"
-            done
+          cd $GITHUB_WORKSPACE/workdir/source
+          if [ -f out/arch/arm64/boot/Image.gz-dtb ]; then
+              echo "CHECK_FILE_IS_OK=true" >> $GITHUB_ENV
           else
-            echo "当前内核版本后缀：${{ env.KERNEL_NAME }}"
-            for f in ./scripts/setlocalversion; do
-              sed -i "\$s|echo \"\\\$res\"|echo \"-${{ env.KERNEL_NAME }}\"|" "$f"
-            done
+              echo "Kernel output file is missing"
+              exit 1
           fi
-           
-      - name: 构建内核
+
+      - name: Prepare AnyKernel3 for nabu
+        if: env.CHECK_FILE_IS_OK == 'true'
         run: |
-          cd kernel_workspace
-          cd common
-          # 使用LLVM 18相关参数编译
-          sudo make -j$(nproc --all) LLVM=-18 ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- CROSS_COMPILE_ARM32=arm-linux-gnueabihf- CC=clang LD=ld.lld HOSTCC=clang HOSTLD=ld.lld O=out KCFLAGS+=-Wno-error gki_defconfig all
-          
-      - name: 克隆 AnyKernel3 并打包
-        run: |
-          cd kernel_workspace
-          cd common
-          git clone https://github.com/Winkmoon/AnyKernel3 --depth=1
-          rm -rf ./AnyKernel3/.git
-          cd AnyKernel3
-          cp ../out/arch/arm64/boot/Image ./Image
-          if [ ! -f ./Image ]; then
-            echo "未找到内核镜像文件，构建可能出错"
-            exit 1
-          fi
-          if [[ ${{ github.event.inputs.lz4k_enable }} == "true" ]]; then
-            wget https://raw.githubusercontent.com/cctv18/oppo_oplus_realme_sm8650/refs/heads/main/zram.zip
-          fi
-          if [[ -n "${{ github.event.inputs.kernel_suffix }}" ]]; then
-            zip -r ../AnyKernel3_SukiSU_${{ env.KSUVER }}_${{ env.KERNEL_VERSION }}_A15_${{ github.event.inputs.kernel_suffix }}.zip ./*
-          else
-            zip -r ../AnyKernel3_SukiSU_${{ env.KSUVER }}_${{ env.KERNEL_VERSION }}_A15_${{ env.KERNEL_NAME }}.zip ./*
-          fi
-      - name: 上传 ZIP 工件
+          git clone https://github.com/AnyKernel3/AnyKernel3.git -b master --depth 1 $GITHUB_WORKSPACE/workdir/ak3
+          cd $GITHUB_WORKSPACE/workdir/ak3
+          # 修改anykernel.sh适配小米平板5
+          cat > anykernel.sh << 'EOL'
+          #!/bin/sh
+          ## AnyKernel3 setup for Xiaomi Pad 5 (nabu)
+          block=/dev/block/bootdevice/by-name/boot
+          is_slot_device=0
+          ramdisk_compression=auto
+          patch_vbmeta_flag=auto
+
+          . tools/ak3-core.sh
+          EOL
+          cp $GITHUB_WORKSPACE/workdir/source/out/arch/arm64/boot/Image.gz-dtb $GITHUB_WORKSPACE/workdir/ak3
+
+      - name: Upload Kernel Image
+        if: env.CHECK_FILE_IS_OK == 'true'
         uses: actions/upload-artifact@v4
         with:
-          name: Kernel_ZIP_Artifacts
-          path: ${{ github.workspace }}/kernel_workspace/*.zip
-  release:
-    needs: build
-    runs-on: ubuntu-latest
-    permissions:
-      contents: write
-      packages: write
-      actions: read
-      
-    steps:
-      - name: 下载 ZIP 工件
-        uses: actions/download-artifact@v4
+          name: kernel_xiaomi_nabu_${{ env.BUILD_TIME }}_Image.gz-dtb
+          path: workdir/source/out/arch/arm64/boot/Image.gz-dtb
+
+      - name: Upload AnyKernel3 Zip
+        if: env.CHECK_FILE_IS_OK == 'true'
+        uses: actions/upload-artifact@v4
         with:
-          name: Kernel_ZIP_Artifacts
-          path: ./release_zips
-      - name: 设置环境变量
-        run: |
-          if [[ -n "${{ github.event.inputs.kernel_suffix }}" ]]; then
-            FULL_VERSION=${{ format('{0}.118-{1}', env.KERNEL_VERSION, github.event.inputs.kernel_suffix) }}
-            echo "FULL_VERSION=$FULL_VERSION" >> $GITHUB_ENV
-            export FULL_VERSION=$FULL_VERSION
-          else
-            FULL_VERSION=${{ format('{0}.118-{1}', env.KERNEL_VERSION, env.KERNEL_NAME) }}
-            echo "FULL_VERSION=$FULL_VERSION" >> $GITHUB_ENV
-            export FULL_VERSION=$FULL_VERSION
-          fi
-          TIME="$(TZ='Asia/Shanghai' date +'%y%m%d%H%M%S')"
-          TIME_FORM="$(TZ='Asia/Shanghai' date +'%Y-%m-%d %H:%M:%S')"
-          echo "TIME=$TIME" >> $GITHUB_ENV
-          echo "TIME_FORM=$TIME_FORM" >> $GITHUB_ENV
-          TAG_HEAD="OPPO+OPlus+Realme-A15-build"
-          echo "TAG_HEAD=$TAG_HEAD" >> $GITHUB_ENV
-         
-      - name: 创建发布
-        id: create_release
-        uses: softprops/action-gh-release@v1
-        with:
-          tag_name: "${{ env.TAG_HEAD }}-${{ env.TIME }}"
-          name: "${{ env.TAG_HEAD }}-${{ env.FULL_VERSION }}"
-          body: |
-            ### 📱 XiaoMi11Pro SukiSU-Ultra SM8350 内核 | 构建信息
-            - 内核版本号: ${{ env.FULL_VERSION }}
-            - 编译时间: ${{ env.TIME_FORM }}
-            - 特性：SukiSU Ultra
-            - SukiSU管理器下载：[SukiSU-Ultra](https://github.com/ShirkNeko/SukiSU-Ultra/releases)
-            ### ⏫️ 更新内容：
-            - 更新SukiSU Ultra至最新版本（${{ needs.build.outputs.ksuver }}）
-            - (预留)
-            ### 📋 安装方法 | Installation Guide
-            1. 若你的手机已经安装了第三方Recovery（如TWRP)，可下载对应机型的AnyKernel刷机包后进入Recovery模式，通过Recovery刷入刷机包后重启设备
-            2. 若你的手机之前已有 root 权限，可在手机上安装[HorizonKernelFlasher](https://github.com/libxzr/HorizonKernelFlasher/releases)，在HorizonKernelFlasher中刷入AnyKernel刷机包并重启
-            3. 若你之前已刷入SukiSU Ultra内核，且SukiSU Ultra管理器已更新至最新版本，可在SukiSU Ultra管理器中直接刷入AnyKernel刷机包并重启
-            4. 刷入无lz4kd补丁版的内核前若刷入过lz4kd补丁版的内核，为避免出错，请先关闭zram模块
-            #### ※※※刷写内核有风险，为防止出现意外导致手机变砖，在刷入内核前请务必用[KernelFlasher](https://github.com/capntrips/KernelFlasher)等软件备份boot等关键启动分区!※※※
-          draft: false
-          prerelease: false
-          files: |
-            release_zips/AnyKernel3_*.zip
+          name: AnyKernel3_xiaomi_nabu_${{ env.BUILD_TIME }}.zip
+          path: workdir/ak3/*
