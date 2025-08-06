@@ -31,7 +31,7 @@ jobs:
             libssl-dev pwgen libswitch-perl policycoreutils minicom libxml-sax-base-perl \
             libxml-simple-perl bc libc6-dev-i386 libx11-dev lib32z1-dev libgl1-mesa-dev \
             xsltproc unzip device-tree-compiler python3 python-is-python3 \
-            libncurses5-dev libncurses5
+            libncurses-dev libncurses5-dev libncursesw5-dev
           sudo apt-get install -y python2.7
           sudo ln -sf /usr/bin/python2.7 /usr/bin/python2
           sudo apt-get install -y gcc-multilib g++-multilib
