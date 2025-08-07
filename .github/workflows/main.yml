@@ -1,9 +1,7 @@
-name: Build Xiaomi Pad 5 Kernel
+name: Build Xiaomi nabu Kernel
 
 on:
-  workflow_call:
   workflow_dispatch:
-
 jobs:
   build:
     name: Build Kernel
